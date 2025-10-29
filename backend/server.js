@@ -15,8 +15,8 @@ app.use(cors());
 app.use(express.json());
 
 // Database setup
-const dbPath = process.env.NODE_ENV === 'production' 
-  ? '/opt/render/project/src/db/feedback.db' 
+const dbPath = process.env.NODE_ENV === 'production'
+  ? '/opt/render/project/backend/db/feedback.db'
   : path.resolve(__dirname, './db/feedback.db');
 
 // CREATE DATABASE DIRECTORY IF IT DOESN'T EXIST
@@ -115,10 +115,10 @@ app.get('/health', (req, res) => {
 // Serve frontend in production - FIXED VERSION
 if (process.env.NODE_ENV === 'production') {
   // Serve static files if frontend build exists
-  const frontendPath = path.join(__dirname, '../frontend/build');
+  const frontendPath = path.join(__dirname, '../build');
   if (fs.existsSync(frontendPath)) {
     app.use(express.static(frontendPath));
-    
+
     // Handle client-side routing - exclude API routes
     app.get(/^\/(?!api).*/, (req, res) => {
       res.sendFile(path.join(frontendPath, 'index.html'));
