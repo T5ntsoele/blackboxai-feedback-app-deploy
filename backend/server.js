@@ -5,21 +5,32 @@ const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs'); // Added for directory creation
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors()); // Enable CORS (required for React frontend)
-app.use(express.json()); // Parse JSON bodies
+app.use(cors());
+app.use(express.json());
 
-// Database setup
-const dbPath = path.resolve(__dirname, process.env.DB_PATH || './db/feedback.db');
+// Database setup - UPDATED FOR RENDER
+const dbPath = process.env.NODE_ENV === 'production' 
+  ? '/opt/render/project/src/db/feedback.db' 
+  : path.resolve(__dirname, './db/feedback.db');
+
+// CREATE DATABASE DIRECTORY IF IT DOESN'T EXIST - CRITICAL FIX
+const dbDir = path.dirname(dbPath);
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+  console.log('Created database directory:', dbDir);
+}
+
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Error opening database:', err.message);
   } else {
-    console.log('Connected to SQLite database');
+    console.log('Connected to SQLite database at:', dbPath);
     // Create Feedback table if not exists
     db.run(`
       CREATE TABLE IF NOT EXISTS Feedback (
@@ -27,9 +38,16 @@ const db = new sqlite3.Database(dbPath, (err) => {
         studentName TEXT NOT NULL,
         courseCode TEXT NOT NULL,
         comments TEXT,
-        rating INTEGER CHECK(rating >= 1 AND rating <= 5) NOT NULL
+        rating INTEGER CHECK(rating >= 1 AND rating <= 5) NOT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
       )
-    `);
+    `, (err) => {
+      if (err) {
+        console.error('Error creating table:', err.message);
+      } else {
+        console.log('Feedback table ready');
+      }
+    });
   }
 });
 
@@ -62,7 +80,7 @@ app.post('/api/feedback', (req, res) => {
 
 // GET /api/feedback → Retrieve all feedback
 app.get('/api/feedback', (req, res) => {
-  db.all('SELECT * FROM Feedback', [], (err, rows) => {
+  db.all('SELECT * FROM Feedback ORDER BY createdAt DESC', [], (err, rows) => {
     if (err) {
       console.error('Select error:', err.message);
       return res.status(500).json({ error: 'Database error' });
@@ -85,6 +103,24 @@ app.delete('/api/feedback/:id', (req, res) => {
   });
 });
 
+// Health check endpoint - ADD THIS FOR RENDER
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// Serve frontend in production (if you have a frontend build)
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, '../frontend/build')));
+  
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../frontend/build', 'index.html'));
+  });
+}
+
 // Global error handler (basic)
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -93,5 +129,7 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`✅ Backend running on http://localhost:${PORT}`);
+  console.log(`✅ Backend running on port ${PORT}`);
+  console.log(`📊 Database location: ${dbPath}`);
+  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
