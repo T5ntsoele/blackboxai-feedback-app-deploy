@@ -60,7 +60,7 @@ const FeedbackForm = () => {
               name="studentName"
               value={formData.studentName}
               onChange={handleChange}
-              placeholder="e.g., John Doe"
+              placeholder="e.g., your name"
             />
             {errors.studentName && <div className="error">{errors.studentName}</div>}
           </div>
