@@ -3,7 +3,7 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const Database = require('better-sqlite3'); // Changed to better-sqlite3
+const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
 
@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Database setup - UPDATED FOR RENDER
+// Database setup
 const dbPath = process.env.NODE_ENV === 'production' 
   ? '/opt/render/project/src/db/feedback.db' 
   : path.resolve(__dirname, './db/feedback.db');
@@ -26,28 +26,30 @@ if (!fs.existsSync(dbDir)) {
   console.log('Created database directory:', dbDir);
 }
 
-// Initialize database with better-sqlite3
-let db;
-try {
-  db = new Database(dbPath);
-  console.log('Connected to SQLite database at:', dbPath);
-  
-  // Create Feedback table if not exists
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS Feedback (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      studentName TEXT NOT NULL,
-      courseCode TEXT NOT NULL,
-      comments TEXT,
-      rating INTEGER CHECK(rating >= 1 AND rating <= 5) NOT NULL,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  console.log('Feedback table ready');
-} catch (err) {
-  console.error('Database initialization error:', err.message);
-  process.exit(1);
-}
+const db = new sqlite3.Database(dbPath, (err) => {
+  if (err) {
+    console.error('Error opening database:', err.message);
+  } else {
+    console.log('Connected to SQLite database at:', dbPath);
+    // Create Feedback table if not exists
+    db.run(`
+      CREATE TABLE IF NOT EXISTS Feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        studentName TEXT NOT NULL,
+        courseCode TEXT NOT NULL,
+        comments TEXT,
+        rating INTEGER CHECK(rating >= 1 AND rating <= 5) NOT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `, (err) => {
+      if (err) {
+        console.error('Error creating table:', err.message);
+      } else {
+        console.log('Feedback table ready');
+      }
+    });
+  }
+});
 
 // === API ENDPOINTS ===
 
@@ -60,50 +62,45 @@ app.post('/api/feedback', (req, res) => {
     return res.status(400).json({ error: 'Invalid input: all fields required, rating must be 1–5' });
   }
 
-  try {
-    const stmt = db.prepare(`INSERT INTO Feedback (studentName, courseCode, comments, rating) VALUES (?, ?, ?, ?)`);
-    const result = stmt.run(studentName, courseCode, comments, rating);
-    
+  const sql = `INSERT INTO Feedback (studentName, courseCode, comments, rating) VALUES (?, ?, ?, ?)`;
+  db.run(sql, [studentName, courseCode, comments, rating], function (err) {
+    if (err) {
+      console.error('Insert error:', err.message);
+      return res.status(500).json({ error: 'Database error' });
+    }
     res.status(201).json({
-      id: result.lastInsertRowid,
+      id: this.lastID,
       studentName,
       courseCode,
       comments,
       rating
     });
-  } catch (err) {
-    console.error('Insert error:', err.message);
-    return res.status(500).json({ error: 'Database error' });
-  }
+  });
 });
 
 // GET /api/feedback → Retrieve all feedback
 app.get('/api/feedback', (req, res) => {
-  try {
-    const stmt = db.prepare('SELECT * FROM Feedback ORDER BY createdAt DESC');
-    const rows = stmt.all();
+  db.all('SELECT * FROM Feedback ORDER BY createdAt DESC', [], (err, rows) => {
+    if (err) {
+      console.error('Select error:', err.message);
+      return res.status(500).json({ error: 'Database error' });
+    }
     res.json(rows);
-  } catch (err) {
-    console.error('Select error:', err.message);
-    return res.status(500).json({ error: 'Database error' });
-  }
+  });
 });
 
-// (Bonus) DELETE /api/feedback/:id
+// DELETE /api/feedback/:id
 app.delete('/api/feedback/:id', (req, res) => {
   const id = req.params.id;
-  try {
-    const stmt = db.prepare('DELETE FROM Feedback WHERE id = ?');
-    const result = stmt.run(id);
-    
-    if (result.changes === 0) {
+  db.run('DELETE FROM Feedback WHERE id = ?', id, function (err) {
+    if (err) {
+      return res.status(500).json({ error: 'Delete failed' });
+    }
+    if (this.changes === 0) {
       return res.status(404).json({ error: 'Feedback not found' });
     }
     res.json({ message: 'Feedback deleted' });
-  } catch (err) {
-    console.error('Delete error:', err.message);
-    return res.status(500).json({ error: 'Delete failed' });
-  }
+  });
 });
 
 // Health check endpoint
@@ -115,13 +112,18 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Serve frontend in production (if you have a frontend build)
+// Serve frontend in production - FIXED VERSION
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../frontend/build')));
-  
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend/build', 'index.html'));
-  });
+  // Serve static files if frontend build exists
+  const frontendPath = path.join(__dirname, '../frontend/build');
+  if (fs.existsSync(frontendPath)) {
+    app.use(express.static(frontendPath));
+    
+    // Handle client-side routing - exclude API routes
+    app.get(/^\/(?!api).*/, (req, res) => {
+      res.sendFile(path.join(frontendPath, 'index.html'));
+    });
+  }
 }
 
 // Global error handler
